@@ -7,6 +7,7 @@ import com.frauddetect.starter.model.MlPrediction;
 import com.frauddetect.starter.model.RiskDecision;
 import com.frauddetect.starter.model.Transaction;
 import com.frauddetect.starter.model.TransactionRecord;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Service;
 
@@ -15,18 +16,18 @@ import java.time.LocalDateTime;
 /**
  * Kafka Consumer
  *
- * For every transaction received from Kafka:
+ * Kafka is enabled only when:
  *
- * 1. Convert Kafka JSON into Transaction
- * 2. Check for duplicate transactionId
- * 3. Run the Java rules engine
- * 4. Call the Python ML model
- * 5. Combine rules + ML using RiskDecisionEngine
- * 6. Generate an explanation using the local Ollama LLM
- * 7. Save all results into the database
- * 8. Create an alert if the transaction needs human review
+ * app.kafka.enabled=true
+ *
+ * For Render deployment, Kafka can remain disabled.
  */
 @Service
+@ConditionalOnProperty(
+        name = "app.kafka.enabled",
+        havingValue = "true",
+        matchIfMissing = false
+)
 public class TransactionConsumer {
 
     private final FraudRuleService fraudRuleService;
@@ -131,8 +132,14 @@ public class TransactionConsumer {
                     transaction.getTransactionId()
             );
 
+            // Authenticated user ID
             record.setUserId(
                     transaction.getUserId()
+            );
+
+            // Authenticated account ownership
+            record.setOwnerEmail(
+                    transaction.getOwnerEmail()
             );
 
             record.setAmount(
@@ -202,8 +209,14 @@ public class TransactionConsumer {
 
                 Alert alert = new Alert();
 
+                // Transaction ownership
                 alert.setTransactionId(
                         transaction.getTransactionId()
+                );
+
+                // Authenticated user's email
+                alert.setUserId(
+                        transaction.getUserId()
                 );
 
                 alert.setFinalRiskScore(
@@ -231,12 +244,18 @@ public class TransactionConsumer {
                 System.out.println(
                         "Alert created for transaction "
                                 + transaction.getTransactionId()
+                                + " | User: "
+                                + transaction.getUserId()
                 );
             }
 
             System.out.println(
                     "Processed transaction "
                             + transaction.getTransactionId()
+                            + " | User: "
+                            + transaction.getUserId()
+                            + " | Owner: "
+                            + transaction.getOwnerEmail()
                             + " | Level: "
                             + decision.getRiskLevel()
                             + " | Final Score: "

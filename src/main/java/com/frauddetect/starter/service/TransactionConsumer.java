@@ -13,15 +13,6 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 
-/**
- * Kafka Consumer
- *
- * Kafka is enabled only when:
- *
- * app.kafka.enabled=true
- *
- * For Render deployment, Kafka can remain disabled.
- */
 @Service
 @ConditionalOnProperty(
         name = "app.kafka.enabled",
@@ -63,18 +54,14 @@ public class TransactionConsumer {
 
         try {
 
-            System.out.println(
-                    "Received from Kafka: " + message
-            );
+            System.out.println("Received from Kafka: " + message);
 
-            // Convert Kafka JSON into Java Transaction object
             Transaction transaction =
                     objectMapper.readValue(
                             message,
                             Transaction.class
                     );
 
-            // Check whether this transaction was already processed
             if (transactionRepository.existsByTransactionId(
                     transaction.getTransactionId())) {
 
@@ -86,11 +73,11 @@ public class TransactionConsumer {
                 return;
             }
 
-            // 1. Run Java rules engine
+            // 1. Java rules
             FraudCheckResult ruleResult =
                     fraudRuleService.check(transaction);
 
-            // 2. Run ML model
+            // 2. Python ML
             MlPrediction mlPrediction =
                     mlModelClient.getPrediction(transaction);
 
@@ -102,7 +89,7 @@ public class TransactionConsumer {
                             mlPrediction
                     );
 
-            // 4. Generate LLM explanation
+            // 4. LLM explanation
             String explanation;
 
             if (decision.isFlaggedForReview()) {
@@ -123,23 +110,16 @@ public class TransactionConsumer {
                         "No explanation needed - transaction is low risk.";
             }
 
-            // 5. Create database record
+            // 5. Save transaction record
             TransactionRecord record =
                     new TransactionRecord();
 
-            // Original transaction information
             record.setTransactionId(
                     transaction.getTransactionId()
             );
 
-            // Authenticated user ID
             record.setUserId(
                     transaction.getUserId()
-            );
-
-            // Authenticated account ownership
-            record.setOwnerEmail(
-                    transaction.getOwnerEmail()
             );
 
             record.setAmount(
@@ -158,7 +138,6 @@ public class TransactionConsumer {
                     transaction.getHourOfDay()
             );
 
-            // Rules engine result
             record.setFlaggedAsFraud(
                     ruleResult.isFlaggedAsFraud()
             );
@@ -171,7 +150,6 @@ public class TransactionConsumer {
                     LocalDateTime.now()
             );
 
-            // ML model result
             if (mlPrediction != null) {
 
                 record.setMlRiskScore(
@@ -183,7 +161,6 @@ public class TransactionConsumer {
                 );
             }
 
-            // Final risk decision
             record.setFinalRiskScore(
                     decision.getFinalRiskScore()
             );
@@ -196,27 +173,19 @@ public class TransactionConsumer {
                     decision.isFlaggedForReview()
             );
 
-            // LLM explanation
             record.setLlmExplanation(
                     explanation
             );
 
-            // Save transaction history
             transactionRepository.save(record);
 
-            // 6. Create alert for transactions requiring review
+            // 6. Create alert
             if (decision.isFlaggedForReview()) {
 
                 Alert alert = new Alert();
 
-                // Transaction ownership
                 alert.setTransactionId(
                         transaction.getTransactionId()
-                );
-
-                // Authenticated user's email
-                alert.setUserId(
-                        transaction.getUserId()
                 );
 
                 alert.setFinalRiskScore(
@@ -244,8 +213,6 @@ public class TransactionConsumer {
                 System.out.println(
                         "Alert created for transaction "
                                 + transaction.getTransactionId()
-                                + " | User: "
-                                + transaction.getUserId()
                 );
             }
 
@@ -254,8 +221,6 @@ public class TransactionConsumer {
                             + transaction.getTransactionId()
                             + " | User: "
                             + transaction.getUserId()
-                            + " | Owner: "
-                            + transaction.getOwnerEmail()
                             + " | Level: "
                             + decision.getRiskLevel()
                             + " | Final Score: "

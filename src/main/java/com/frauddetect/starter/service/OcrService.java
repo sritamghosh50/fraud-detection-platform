@@ -5,49 +5,74 @@ import net.sourceforge.tess4j.TesseractException;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
+import javax.imageio.ImageIO;
+import java.awt.Color;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
+import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
 
 @Service
 public class OcrService {
 
-    // Linux Docker path where Debian installs Tesseract language data.
     private static final String TESSDATA_PATH =
             "/usr/share/tesseract-ocr/5/tessdata";
 
-    public String extractText(MultipartFile imageFile)
+    private static final int MAX_IMAGE_SIZE = 2000;
+
+    public String extractText(
+            MultipartFile imageFile)
             throws IOException, TesseractException {
 
-        if (imageFile == null || imageFile.isEmpty()) {
+        if (imageFile == null
+                || imageFile.isEmpty()) {
+
             throw new IllegalArgumentException(
                     "Image file is empty."
             );
         }
 
-        /*
-         * Keep the actual image extension.
-         *
-         * Previously every file was saved as .png.
-         * That caused JPG/JPEG images to fail because
-         * the file extension did not match the real image format.
-         */
-        String originalFilename =
-                imageFile.getOriginalFilename();
-
-        String extension = getImageExtension(
-                originalFilename,
-                imageFile.getContentType()
-        );
-
-        File tempFile =
+        File originalFile =
                 File.createTempFile(
-                        "fraudguard-",
-                        extension
+                        "fraudguard-original-",
+                        ".img"
+                );
+
+        File processedFile =
+                File.createTempFile(
+                        "fraudguard-ocr-",
+                        ".png"
                 );
 
         try {
 
-            imageFile.transferTo(tempFile);
+            imageFile.transferTo(
+                    originalFile
+            );
+
+            BufferedImage original =
+                    ImageIO.read(
+                            originalFile
+                    );
+
+            if (original == null) {
+
+                throw new IOException(
+                        "Unable to read the uploaded image."
+                );
+            }
+
+            BufferedImage processed =
+                    prepareImage(
+                            original
+                    );
+
+            ImageIO.write(
+                    processed,
+                    "png",
+                    processedFile
+            );
 
             Tesseract tesseract =
                     new Tesseract();
@@ -56,103 +81,172 @@ public class OcrService {
                     TESSDATA_PATH
             );
 
-            tesseract.setLanguage("eng");
+            tesseract.setLanguage(
+                    "eng"
+            );
 
             /*
-             * Tess4J/Tesseract will now receive the
-             * image with its correct extension.
-             *
-             * PNG  -> .png
-             * JPG  -> .jpg
-             * JPEG -> .jpeg
-             * GIF  -> .gif
-             * BMP  -> .bmp
+             * Single uniform block of text.
+             * Faster for screenshots/messages.
              */
-            return tesseract.doOCR(tempFile);
+            tesseract.setPageSegMode(
+                    6
+            );
+
+            /*
+             * Avoid Tesseract trying to guess
+             * a strange DPI from screenshots.
+             */
+            tesseract.setVariable(
+                    "user_defined_dpi",
+                    "200"
+            );
+
+            return tesseract.doOCR(
+                    processedFile
+            );
 
         } finally {
 
-            if (tempFile.exists()) {
-                tempFile.delete();
+            if (originalFile.exists()) {
+
+                originalFile.delete();
+            }
+
+            if (processedFile.exists()) {
+
+                processedFile.delete();
             }
         }
     }
 
-    /**
-     * Determines the correct file extension from
-     * the uploaded image.
-     */
-    private String getImageExtension(
-            String originalFilename,
-            String contentType) {
+    private BufferedImage prepareImage(
+            BufferedImage original) {
+
+        int width =
+                original.getWidth();
+
+        int height =
+                original.getHeight();
+
+        double scale =
+                Math.min(
+                        1.0,
+                        Math.min(
+                                (double) MAX_IMAGE_SIZE / width,
+                                (double) MAX_IMAGE_SIZE / height
+                        )
+                );
+
+        int newWidth =
+                Math.max(
+                        1,
+                        (int) Math.round(
+                                width * scale
+                        )
+                );
+
+        int newHeight =
+                Math.max(
+                        1,
+                        (int) Math.round(
+                                height * scale
+                        )
+                );
+
+        BufferedImage resized =
+                new BufferedImage(
+                        newWidth,
+                        newHeight,
+                        BufferedImage.TYPE_BYTE_GRAY
+                );
+
+        Graphics2D graphics =
+                resized.createGraphics();
+
+        graphics.setRenderingHint(
+                RenderingHints.KEY_INTERPOLATION,
+                RenderingHints.VALUE_INTERPOLATION_BILINEAR
+        );
+
+        graphics.setRenderingHint(
+                RenderingHints.KEY_RENDERING,
+                RenderingHints.VALUE_RENDER_SPEED
+        );
+
+        graphics.setRenderingHint(
+                RenderingHints.KEY_ANTIALIASING,
+                RenderingHints.VALUE_ANTIALIAS_OFF
+        );
+
+        graphics.drawImage(
+                original,
+                0,
+                0,
+                newWidth,
+                newHeight,
+                null
+        );
+
+        graphics.dispose();
 
         /*
-         * First try the original filename.
+         * Slight contrast improvement.
          */
-        if (originalFilename != null
-                && originalFilename.contains(".")) {
+        BufferedImage contrast =
+                new BufferedImage(
+                        newWidth,
+                        newHeight,
+                        BufferedImage.TYPE_BYTE_GRAY
+                );
 
-            String extension =
-                    originalFilename.substring(
-                            originalFilename.lastIndexOf(".")
-                    ).toLowerCase();
+        for (int y = 0;
+             y < newHeight;
+             y++) {
 
-            if (isSupportedExtension(extension)) {
-                return extension;
+            for (int x = 0;
+                 x < newWidth;
+                 x++) {
+
+                int rgb =
+                        resized.getRGB(
+                                x,
+                                y
+                        );
+
+                int gray =
+                        new Color(
+                                rgb
+                        ).getRed();
+
+                /*
+                 * Simple contrast stretch.
+                 */
+                int adjusted =
+                        (gray - 128) * 2 + 128;
+
+                adjusted =
+                        Math.max(
+                                0,
+                                Math.min(
+                                        255,
+                                        adjusted
+                                )
+                        );
+
+                int value =
+                        (adjusted << 16)
+                                | (adjusted << 8)
+                                | adjusted;
+
+                contrast.setRGB(
+                        x,
+                        y,
+                        value
+                );
             }
         }
 
-        /*
-         * If filename does not contain an extension,
-         * use the MIME/content type.
-         */
-        if (contentType != null) {
-
-            switch (contentType.toLowerCase()) {
-
-                case "image/jpeg":
-                    return ".jpg";
-
-                case "image/png":
-                    return ".png";
-
-                case "image/gif":
-                    return ".gif";
-
-                case "image/bmp":
-                    return ".bmp";
-
-                case "image/tiff":
-                    return ".tiff";
-
-                case "image/webp":
-                    return ".webp";
-
-                default:
-                    break;
-            }
-        }
-
-        /*
-         * PNG is used only as a fallback when the
-         * uploaded file provides no usable format information.
-         */
-        return ".png";
-    }
-
-    /**
-     * Checks common image formats.
-     */
-    private boolean isSupportedExtension(
-            String extension) {
-
-        return extension.equals(".jpg")
-                || extension.equals(".jpeg")
-                || extension.equals(".png")
-                || extension.equals(".gif")
-                || extension.equals(".bmp")
-                || extension.equals(".tif")
-                || extension.equals(".tiff")
-                || extension.equals(".webp");
+        return contrast;
     }
 }

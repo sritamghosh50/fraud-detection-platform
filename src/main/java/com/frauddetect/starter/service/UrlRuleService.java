@@ -3,7 +3,6 @@ package com.frauddetect.starter.service;
 import org.springframework.stereotype.Service;
 
 import java.net.URI;
-import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
@@ -11,7 +10,7 @@ import java.util.regex.Pattern;
 @Service
 public class UrlRuleService {
 
-    private static final String[] LINK_SHORTENERS = {
+    private static final String[] SHORTENERS = {
             "bit.ly",
             "tinyurl.com",
             "goo.gl",
@@ -28,411 +27,339 @@ public class UrlRuleService {
             ".click",
             ".loan",
             ".work",
-            ".gq",
             ".tk",
-            ".ml"
+            ".ml",
+            ".gq"
     };
 
-    private static final String[] RESERVED_DOMAINS = {
-            "example.com",
-            "example.org",
-            "example.net"
+    private static final String[] SUSPICIOUS_WORDS = {
+            "login",
+            "verify",
+            "verification",
+            "secure",
+            "security",
+            "account",
+            "update",
+            "confirm",
+            "password",
+            "payment",
+            "wallet",
+            "bank",
+            "claim",
+            "reward",
+            "prize",
+            "winner",
+            "free"
     };
 
-    private static final String[] RESERVED_TLDS = {
-            ".example",
-            ".invalid",
-            ".test",
-            ".localhost"
-    };
-
-    /*
-     * Official security testing domains.
-     *
-     * These are deterministic test cases.
-     * We do NOT allow the LLM to downgrade them.
-     */
-    private static final String[] SECURITY_TEST_DOMAINS = {
-
-            // Palo Alto Networks
-            "test-phishing.testpanw.com",
-            "test-malware.testpanw.com",
-            "test-c2.testpanw.com",
-            "test-ransomware.testpanw.com",
-            "test-dnstun.testpanw.com",
-            "test-dga.testpanw.com",
-            "test-nrd.testpanw.com",
-            "test-malicious-nrd.testpanw.com",
-            "test-grayware.testpanw.com",
-            "test-parked.testpanw.com",
-            "test-proxy.testpanw.com",
-            "test-fastflux.testpanw.com",
-            "test-nxns.testpanw.com",
-            "test-dangling-domain.testpanw.com",
-            "test-dns-rebinding.testpanw.com",
-            "test-dns-infiltration.testpanw.com",
-            "test-wildcard-abuse.testpanw.com",
-            "test-strategically-aged.testpanw.com",
-            "test-compromised-dns.testpanw.com",
-            "test-adtracking.testpanw.com",
-            "test-cname-cloaking.testpanw.com",
-            "test-stockpile-domain.testpanw.com",
-            "test-squatting.testpanw.com",
-            "test-subdomain-reputation.testpanw.com",
-            "test-fake-software.testpanw.com",
-
-            // CyberFOX
-            "phishing_and_deception.test.cyberfox.com",
-            "malware.test.cyberfox.com",
-            "botnet.test.cyberfox.com"
-    };
-
-    private static final String[] COMMONLY_IMPERSONATED = {
+    private static final String[] BRANDS = {
             "paypal",
             "amazon",
             "google",
             "microsoft",
             "apple",
             "netflix",
-            "bank",
-            "irs",
-            "gov"
+            "sbi",
+            "hdfc",
+            "icici",
+            "axis"
     };
 
-    private static final Pattern IP_ADDRESS_PATTERN =
+    private static final Pattern IP_PATTERN =
             Pattern.compile(
-                    "https?://\\d{1,3}(?:\\.\\d{1,3}){3}"
+                    "^https?://\\d{1,3}(?:\\.\\d{1,3}){3}"
             );
 
-    public MessageRuleService.RuleScanResult scan(String url) {
+    public MessageRuleService.RuleScanResult scan(
+            String url) {
 
-        String lowerUrl =
+        String safeUrl =
                 url == null
                         ? ""
-                        : url.toLowerCase().trim();
+                        : url.trim();
+
+        String lower =
+                safeUrl.toLowerCase();
 
         List<String> indicators =
                 new ArrayList<>();
 
-        double score = 5;
+        int score = 0;
+
+        if (safeUrl.isBlank()) {
+
+            return new MessageRuleService.RuleScanResult(
+                    50,
+                    List.of("No URL was provided"),
+                    "Invalid URL"
+            );
+        }
 
         String hostname =
-                extractHostname(lowerUrl);
+                extractHostname(
+                        safeUrl
+                );
 
-        /*
-         * ---------------------------------------------------------
-         * INVALID URL
-         * ---------------------------------------------------------
-         */
-
-        if (hostname == null || hostname.isBlank()) {
+        if (hostname == null
+                || hostname.isBlank()) {
 
             return new MessageRuleService.RuleScanResult(
                     50,
                     List.of(
-                            "Could not reliably identify the URL hostname"
+                            "Could not identify the website hostname"
                     ),
-                    "Unclear URL Structure"
+                    "Invalid URL"
             );
         }
 
-
         /*
-         * ---------------------------------------------------------
-         * SECURITY TEST DOMAIN
-         * ---------------------------------------------------------
-         *
-         * IMPORTANT:
-         *
-         * This check happens FIRST.
-         *
-         * These are controlled security-testing domains.
-         * The score is forced to 95.
-         *
-         * The LLM cannot downgrade this result later.
-         * ---------------------------------------------------------
+         * HTTPS
          */
 
-        String securityTestType =
-                getSecurityTestType(hostname);
+        if (!lower.startsWith("https://")) {
 
-        if (securityTestType != null) {
+            score += 12;
 
             indicators.add(
-                    "Matches an official security-testing domain for "
-                            + securityTestType
-            );
-
-            return new MessageRuleService.RuleScanResult(
-                    95,
-                    indicators,
-                    "Security Test Domain - " + securityTestType
+                    "The URL does not use HTTPS"
             );
         }
 
-
         /*
-         * ---------------------------------------------------------
-         * RESERVED / INVALID DOMAIN
-         * ---------------------------------------------------------
+         * IP address
          */
 
-        if (isReservedDomain(hostname)) {
+        if (IP_PATTERN.matcher(
+                lower
+        ).find()) {
+
+            score += 30;
 
             indicators.add(
-                    "Uses a reserved/test domain (" +
-                            hostname +
-                            ") intended for examples, testing, "
-                            + "or documentation"
+                    "Uses an IP address instead of a domain name"
+            );
+        }
+
+        /*
+         * Punycode
+         */
+
+        if (hostname.contains(
+                "xn--"
+        )) {
+
+            score += 25;
+
+            indicators.add(
+                    "Uses punycode, which can be used for look-alike domains"
+            );
+        }
+
+        /*
+         * URL length
+         */
+
+        if (safeUrl.length() > 120) {
+
+            score += 10;
+
+            indicators.add(
+                    "URL is unusually long"
             );
 
-            score += 15;
+        } else if (safeUrl.length() > 80) {
 
-            /*
-             * Reserved domains are not automatically malicious.
-             * Give them a controlled medium-low score.
-             */
+            score += 5;
 
-            score =
-                    Math.max(
-                            score,
-                            20
-                    );
+            indicators.add(
+                    "URL is relatively long"
+            );
         }
 
-
         /*
-         * ---------------------------------------------------------
-         * LINK SHORTENER
-         * ---------------------------------------------------------
+         * @ symbol
          */
 
-        for (String shortener : LINK_SHORTENERS) {
+        if (safeUrl.contains("@")) {
 
-            if (hostname.equals(shortener)
-                    || hostname.endsWith("." + shortener)) {
+            score += 25;
 
-                indicators.add(
-                        "Uses a link shortener (" +
-                                shortener +
-                                ") which hides the final destination"
-                );
-
-                score += 20;
-
-                break;
-            }
+            indicators.add(
+                    "Contains '@', which can disguise the actual destination"
+            );
         }
 
-
         /*
-         * ---------------------------------------------------------
-         * SUSPICIOUS TLD
-         * ---------------------------------------------------------
+         * Suspicious TLD
          */
 
-        for (String tld : SUSPICIOUS_TLDS) {
+        for (String tld :
+                SUSPICIOUS_TLDS) {
 
             if (hostname.endsWith(tld)) {
 
-                indicators.add(
-                        "Uses an unusual domain ending (" +
-                                tld +
-                                ") that can be associated with suspicious websites"
-                );
+                score += 20;
 
-                score += 15;
+                indicators.add(
+                        "Uses suspicious domain ending: "
+                                + tld
+                );
 
                 break;
             }
         }
 
-
         /*
-         * ---------------------------------------------------------
-         * RAW IP ADDRESS
-         * ---------------------------------------------------------
+         * Shortener
          */
 
-        if (IP_ADDRESS_PATTERN.matcher(lowerUrl).find()) {
+        for (String shortener :
+                SHORTENERS) {
 
-            indicators.add(
-                    "Uses a raw IP address instead of a normal domain name"
-            );
+            if (hostname.equals(
+                    shortener
+            )
+                    || hostname.endsWith(
+                    "." + shortener
+            )) {
 
-            score += 25;
-        }
+                score += 20;
 
-
-        /*
-         * ---------------------------------------------------------
-         * @ SYMBOL
-         * ---------------------------------------------------------
-         */
-
-        if (lowerUrl.contains("@")) {
-
-            indicators.add(
-                    "Contains an '@' symbol, which can be used "
-                            + "to disguise the real destination"
-            );
-
-            score += 25;
-        }
-
-
-        /*
-         * ---------------------------------------------------------
-         * HYPHENS
-         * ---------------------------------------------------------
-         */
-
-        int hyphenCount =
-                hostname.length()
-                        - hostname.replace("-", "").length();
-
-        if (hyphenCount >= 2) {
-
-            indicators.add(
-                    "Contains "
-                            + hyphenCount
-                            + " hyphen(s) in the domain, sometimes used "
-                            + "to mimic legitimate brand names"
-            );
-
-            score +=
-                    hyphenCount >= 3
-                            ? 10
-                            : 5;
-        }
-
-
-        /*
-         * ---------------------------------------------------------
-         * LONG HOSTNAME
-         * ---------------------------------------------------------
-         */
-
-        if (hostname.length() > 40) {
-
-            indicators.add(
-                    "Uses an unusually long hostname"
-            );
-
-            score += 10;
-        }
-
-
-        /*
-         * ---------------------------------------------------------
-         * MULTIPLE SUBDOMAINS
-         * ---------------------------------------------------------
-         */
-
-        int subdomainCount =
-                Math.max(
-                        0,
-                        hostname.split("\\.").length - 2
+                indicators.add(
+                        "Uses a URL shortener: "
+                                + shortener
                 );
 
-        if (subdomainCount >= 3) {
-
-            indicators.add(
-                    "Contains multiple subdomains, which can sometimes "
-                            + "be used to make a domain appear more legitimate"
-            );
-
-            score += 10;
-        }
-
-
-        /*
-         * ---------------------------------------------------------
-         * SENSITIVE WORDS
-         * ---------------------------------------------------------
-         */
-
-        String[] suspiciousWords = {
-                "login",
-                "verify",
-                "verification",
-                "secure",
-                "security",
-                "account",
-                "update",
-                "confirm",
-                "password",
-                "payment"
-        };
-
-        int suspiciousWordCount = 0;
-
-        for (String word : suspiciousWords) {
-
-            if (hostname.contains(word)) {
-
-                suspiciousWordCount++;
+                break;
             }
         }
 
-        if (suspiciousWordCount >= 2) {
-
-            indicators.add(
-                    "Hostname contains multiple security/account-related words"
-            );
-
-            score += 10;
-        }
-
-
         /*
-         * ---------------------------------------------------------
-         * BRAND IMPERSONATION
-         * ---------------------------------------------------------
+         * Hyphens
          */
 
-        for (String brand : COMMONLY_IMPERSONATED) {
+        int hyphens =
+                hostname.length()
+                        - hostname.replace(
+                        "-",
+                        ""
+                ).length();
 
-            if (hostname.contains(brand)
-                    && !isLikelyOfficialDomain(
-                            hostname,
-                            brand
-                    )) {
+        if (hyphens >= 2) {
+
+            score +=
+                    hyphens >= 4
+                            ? 12
+                            : 6;
+
+            indicators.add(
+                    "Domain contains multiple hyphens"
+            );
+        }
+
+        /*
+         * Many subdomains
+         */
+
+        int dots =
+                hostname.length()
+                        - hostname.replace(
+                        ".",
+                        ""
+                ).length();
+
+        if (dots >= 3) {
+
+            score += 10;
+
+            indicators.add(
+                    "Uses multiple subdomains"
+            );
+        }
+
+        /*
+         * Suspicious words anywhere in URL
+         */
+
+        int suspiciousWordMatches = 0;
+
+        for (String word :
+                SUSPICIOUS_WORDS) {
+
+            if (lower.contains(word)) {
+
+                suspiciousWordMatches++;
 
                 indicators.add(
-                        "Mentions \""
-                                + brand
-                                + "\" but does not appear to be the official "
-                                + "domain - possible impersonation"
+                        "Contains suspicious keyword: "
+                                + word
                 );
+            }
+        }
+
+        if (suspiciousWordMatches > 0) {
+
+            score +=
+                    Math.min(
+                            suspiciousWordMatches * 6,
+                            24
+                    );
+        }
+
+        /*
+         * Brand impersonation
+         */
+
+        for (String brand :
+                BRANDS) {
+
+            if (hostname.contains(
+                    brand
+            )
+                    && !isOfficialDomain(
+                    hostname,
+                    brand
+            )) {
 
                 score += 30;
 
+                indicators.add(
+                        "Possible impersonation of "
+                                + brand
+                );
+
                 break;
             }
         }
 
-
         /*
-         * ---------------------------------------------------------
-         * HTTPS
-         * ---------------------------------------------------------
+         * Password / payment query
          */
 
-        if (!lowerUrl.startsWith("https://")) {
+        if (lower.contains(
+                "password="
+        )
+                || lower.contains(
+                "passwd="
+        )
+                || lower.contains(
+                "cvv="
+        )
+                || lower.contains(
+                "otp="
+        )
+                || lower.contains(
+                "card=")) {
+
+            score += 20;
 
             indicators.add(
-                    "Does not use HTTPS"
+                    "URL contains a sensitive-information parameter"
             );
-
-            score += 10;
         }
 
-
         /*
-         * ---------------------------------------------------------
-         * FINAL SCORE
-         * ---------------------------------------------------------
+         * Final score
          */
 
         score =
@@ -444,368 +371,82 @@ public class UrlRuleService {
                         )
                 );
 
-        int finalScore =
-                (int) Math.round(score);
-
-
-        /*
-         * ---------------------------------------------------------
-         * CATEGORY
-         * ---------------------------------------------------------
-         */
-
         String category;
 
-        if (isReservedDomain(hostname)) {
+        if (score >= 70) {
 
             category =
-                    "Reserved / Test Domain";
+                    "Highly Suspicious URL";
 
-        } else if (indicators.isEmpty()) {
-
-            category =
-                    "No Obvious Structural Red Flags";
-
-        } else if (containsKnownBrand(hostname)) {
+        } else if (score >= 40) {
 
             category =
-                    "Possible Brand Impersonation";
+                    "Suspicious URL Structure";
+
+        } else if (score >= 15) {
+
+            category =
+                    "Some Risk Indicators";
 
         } else {
 
             category =
-                    "Suspicious URL Structure";
+                    "No Strong URL Red Flags";
         }
 
+        if (indicators.isEmpty()) {
 
-        /*
-         * ---------------------------------------------------------
-         * DEBUG LOG
-         * ---------------------------------------------------------
-         */
-
-        System.out.println(
-                "========================================"
-        );
-
-        System.out.println(
-                "FraudGuard URL Rule Analysis"
-        );
-
-        System.out.println(
-                "URL: " + url
-        );
-
-        System.out.println(
-                "Hostname: " + hostname
-        );
-
-        System.out.println(
-                "Security Test Type: "
-                        + securityTestType
-        );
-
-        System.out.println(
-                "Rule Score: "
-                        + finalScore
-        );
-
-        System.out.println(
-                "Category: "
-                        + category
-        );
-
-        System.out.println(
-                "========================================"
-        );
-
+            indicators.add(
+                    "No strong structural red flags detected"
+            );
+        }
 
         return new MessageRuleService.RuleScanResult(
-                finalScore,
+                score,
                 indicators,
                 category
         );
     }
 
-
-    /*
-     * =========================================================
-     * SECURITY TEST DOMAIN DETECTION
-     * =========================================================
-     */
-
-    private String getSecurityTestType(
-            String hostname
-    ) {
-
-        if (hostname == null
-                || hostname.isBlank()) {
-
-            return null;
-        }
-
-        /*
-         * Palo Alto phishing
-         */
-        if (matchesDomain(
-                hostname,
-                "test-phishing.testpanw.com"
-        )) {
-
-            return "PHISHING";
-        }
-
-
-        /*
-         * Palo Alto malware
-         */
-        if (matchesDomain(
-                hostname,
-                "test-malware.testpanw.com"
-        )) {
-
-            return "MALWARE";
-        }
-
-
-        /*
-         * Palo Alto C2
-         */
-        if (matchesDomain(
-                hostname,
-                "test-c2.testpanw.com"
-        )) {
-
-            return "COMMAND AND CONTROL";
-        }
-
-
-        /*
-         * Palo Alto ransomware
-         */
-        if (matchesDomain(
-                hostname,
-                "test-ransomware.testpanw.com"
-        )) {
-
-            return "RANSOMWARE";
-        }
-
-
-        /*
-         * Other Palo Alto test domains
-         */
-        String[] paloAltoDomains = {
-
-                "test-dnstun.testpanw.com",
-                "test-dga.testpanw.com",
-                "test-nrd.testpanw.com",
-                "test-malicious-nrd.testpanw.com",
-                "test-grayware.testpanw.com",
-                "test-parked.testpanw.com",
-                "test-proxy.testpanw.com",
-                "test-fastflux.testpanw.com",
-                "test-nxns.testpanw.com",
-                "test-dangling-domain.testpanw.com",
-                "test-dns-rebinding.testpanw.com",
-                "test-dns-infiltration.testpanw.com",
-                "test-wildcard-abuse.testpanw.com",
-                "test-strategically-aged.testpanw.com",
-                "test-compromised-dns.testpanw.com",
-                "test-adtracking.testpanw.com",
-                "test-cname-cloaking.testpanw.com",
-                "test-stockpile-domain.testpanw.com",
-                "test-squatting.testpanw.com",
-                "test-subdomain-reputation.testpanw.com",
-                "test-fake-software.testpanw.com"
-        };
-
-        for (String domain : paloAltoDomains) {
-
-            if (matchesDomain(
-                    hostname,
-                    domain
-            )) {
-
-                return "SECURITY TEST";
-            }
-        }
-
-
-        /*
-         * CyberFOX phishing
-         */
-        if (matchesDomain(
-                hostname,
-                "phishing_and_deception.test.cyberfox.com"
-        )) {
-
-            return "PHISHING";
-        }
-
-
-        /*
-         * CyberFOX malware
-         */
-        if (matchesDomain(
-                hostname,
-                "malware.test.cyberfox.com"
-        )) {
-
-            return "MALWARE";
-        }
-
-
-        /*
-         * CyberFOX botnet
-         */
-        if (matchesDomain(
-                hostname,
-                "botnet.test.cyberfox.com"
-        )) {
-
-            return "BOTNET";
-        }
-
-
-        return null;
-    }
-
-
-    private boolean matchesDomain(
-            String hostname,
-            String domain
-    ) {
-
-        return hostname.equals(domain)
-                || hostname.endsWith("." + domain);
-    }
-
-
-    /*
-     * =========================================================
-     * RESERVED DOMAIN DETECTION
-     * =========================================================
-     */
-
-    private boolean isReservedDomain(
-            String hostname
-    ) {
-
-        if (hostname == null
-                || hostname.isBlank()) {
-
-            return false;
-        }
-
-        for (String domain : RESERVED_DOMAINS) {
-
-            if (hostname.equals(domain)
-                    || hostname.endsWith("." + domain)) {
-
-                return true;
-            }
-        }
-
-        for (String tld : RESERVED_TLDS) {
-
-            if (hostname.endsWith(tld)
-                    || hostname.contains(tld + ".")) {
-
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-
-    /*
-     * =========================================================
-     * KNOWN BRAND DETECTION
-     * =========================================================
-     */
-
-    private boolean containsKnownBrand(
-            String hostname
-    ) {
-
-        for (String brand : COMMONLY_IMPERSONATED) {
-
-            if (hostname.contains(brand)
-                    && !isLikelyOfficialDomain(
-                            hostname,
-                            brand
-                    )) {
-
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-
-    /*
-     * =========================================================
-     * HOSTNAME EXTRACTION
-     * =========================================================
-     */
-
     private String extractHostname(
-            String url
-    ) {
+            String url) {
 
         try {
 
-            URI uri =
-                    new URI(url);
+            String normalized =
+                    url;
 
-            String host =
-                    uri.getHost();
+            if (!normalized.matches(
+                    "^https?://.*"
+            )) {
 
-            if (host != null) {
-
-                return host.toLowerCase();
+                normalized =
+                        "https://" +
+                                normalized;
             }
 
-        } catch (URISyntaxException ignored) {
+            URI uri =
+                    new URI(
+                            normalized
+                    );
 
-            /*
-             * Fall back to simple hostname extraction.
-             */
+            return uri.getHost();
+
+        } catch (Exception ignored) {
+
+            return null;
         }
-
-
-        String cleaned =
-                url
-                        .replaceFirst(
-                                "^https?://",
-                                ""
-                        )
-                        .split("/")[0]
-                        .split(":")[0];
-
-        return cleaned.toLowerCase();
     }
 
-
-    /*
-     * =========================================================
-     * OFFICIAL DOMAIN CHECK
-     * =========================================================
-     */
-
-    private boolean isLikelyOfficialDomain(
+    private boolean isOfficialDomain(
             String hostname,
-            String brand
-    ) {
+            String brand) {
 
         return hostname.equals(
-                    brand + ".com"
-                )
+                brand + ".com"
+        )
                 || hostname.equals(
-                    "www." + brand + ".com"
-                );
+                "www." + brand + ".com"
+        );
     }
 }

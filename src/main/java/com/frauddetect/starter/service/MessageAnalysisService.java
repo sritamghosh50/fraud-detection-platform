@@ -7,141 +7,66 @@ import org.springframework.stereotype.Service;
 public class MessageAnalysisService {
 
     private final MessageRuleService messageRuleService;
-    private final MessageLlmService messageLlmService;
-
-    private static final double LLM_WEIGHT = 0.6;
-    private static final double RULES_WEIGHT = 0.4;
 
     public MessageAnalysisService(
-            MessageRuleService messageRuleService,
-            MessageLlmService messageLlmService) {
+            MessageRuleService messageRuleService) {
 
-        this.messageRuleService = messageRuleService;
-        this.messageLlmService = messageLlmService;
+        this.messageRuleService =
+                messageRuleService;
     }
 
-    /*
-     * Normal message analysis.
-     *
-     * Uses rules + LLM when LLM is available.
-     */
-    public MessageAnalysisResult analyze(String messageText) {
+    public MessageAnalysisResult analyze(
+            String messageText) {
 
-        MessageRuleService.RuleScanResult ruleResult =
-                messageRuleService.scan(messageText);
-
-        MessageLlmService.LlmMessageAnalysis llmResult =
-                messageLlmService.analyze(messageText);
-
-        /*
-         * If LLM is unavailable, use rules only.
-         */
-        if (llmResult.llmUnavailable) {
-            return buildRuleOnlyResult(ruleResult);
-        }
-
-        double llmScore =
-                llmResult.isScam
-                        ? llmResult.confidence
-                        : (100 - llmResult.confidence);
-
-        double finalScore =
-                (llmScore * LLM_WEIGHT)
-                        + (ruleResult.score * RULES_WEIGHT);
-
-        if (ruleResult.score >= 70
-                && finalScore < ruleResult.score) {
-
-            finalScore = ruleResult.score;
-        }
+        MessageRuleService.RuleScanResult scan =
+                messageRuleService.scan(
+                        messageText
+                );
 
         return buildResult(
-                finalScore,
-                llmResult.category,
-                ruleResult,
-                llmResult.explanation
+                scan
         );
     }
 
     /*
-     * Image analysis uses ONLY deterministic rules.
-     *
-     * This is intentionally fast.
-     * It does not wait for Ollama.
+     * Image OCR also uses the same fast rule engine.
      */
     public MessageAnalysisResult analyzeImageText(
             String extractedText) {
 
-        MessageRuleService.RuleScanResult ruleResult =
-                messageRuleService.scan(extractedText);
-
-        return buildRuleOnlyResult(ruleResult);
-    }
-
-    private MessageAnalysisResult buildRuleOnlyResult(
-            MessageRuleService.RuleScanResult ruleResult) {
-
-        String category =
-                ruleResult.likelyCategory;
-
-        if (category == null
-                || category.isBlank()
-                || category.equalsIgnoreCase("Unclear")) {
-
-            category = "Rule-Based Analysis";
-        }
-
-        String explanation;
-
-        if (ruleResult.score == 0) {
-
-            explanation =
-                    "No strong scam indicators were detected "
-                            + "by FraudGuard's security rules.";
-
-        } else {
-
-            explanation =
-                    "The result is based on FraudGuard's "
-                            + "deterministic scam and phishing rules.";
-        }
+        MessageRuleService.RuleScanResult scan =
+                messageRuleService.scan(
+                        extractedText
+                );
 
         return buildResult(
-                ruleResult.score,
-                category,
-                ruleResult,
-                explanation
+                scan
         );
     }
 
     private MessageAnalysisResult buildResult(
-            double score,
-            String category,
-            MessageRuleService.RuleScanResult ruleResult,
-            String explanation) {
+            MessageRuleService.RuleScanResult scan) {
 
-        int finalScore =
-                (int) Math.round(
-                        Math.min(
-                                100,
-                                Math.max(
-                                        0,
-                                        score
-                                )
+        int score =
+                Math.min(
+                        100,
+                        Math.max(
+                                0,
+                                scan.score
                         )
                 );
 
         String riskLevel;
 
-        if (finalScore >= 85) {
+        if (score >= 85) {
 
             riskLevel = "CRITICAL";
 
-        } else if (finalScore >= 60) {
+        } else if (score >= 60) {
 
             riskLevel = "HIGH";
 
-        } else if (finalScore >= 30) {
+        } else if (score >= 30) {
 
             riskLevel = "MEDIUM";
 
@@ -150,50 +75,68 @@ public class MessageAnalysisService {
             riskLevel = "LOW";
         }
 
-        boolean isScam =
-                finalScore >= 60;
+        boolean scam =
+                score >= 60;
 
-        if (category == null
-                || category.isBlank()) {
+        String explanation;
 
-            category = "Unclear";
+        if (scan.indicators.isEmpty()) {
+
+            explanation =
+                    "No strong scam indicators were detected "
+                            + "by FraudGuard's message security rules.";
+
+        } else {
+
+            explanation =
+                    "FraudGuard detected " +
+                            scan.indicators.size() +
+                            " suspicious indicator(s) "
+                            + "using its message security rules.";
         }
 
         String recommendation;
 
-        if (isScam) {
+        if (score >= 60) {
 
             recommendation =
-                    "Do not click links, share personal "
-                            + "information, or send money. "
-                            + "Verify independently through official channels.";
+                    "Do not click links, share OTPs or passwords, "
+                            + "or send money. Verify the sender independently.";
 
-        } else if (finalScore >= 30) {
+        } else if (score >= 30) {
 
             recommendation =
-                    "Proceed carefully and verify the sender "
-                            + "before sharing information or making payments.";
+                    "Be careful with this message and verify "
+                            + "the sender before taking action.";
 
         } else {
 
             recommendation =
                     "No strong scam indicators were detected. "
-                            + "Continue to stay cautious with unexpected messages.";
+                            + "Continue to stay cautious online.";
         }
 
         MessageAnalysisResult result =
                 new MessageAnalysisResult();
 
-        result.setScam(isScam);
+        result.setScam(
+                scam
+        );
 
-        result.setScamCategory(category);
+        result.setScamCategory(
+                scan.likelyCategory
+        );
 
-        result.setRiskScore(finalScore);
+        result.setRiskScore(
+                score
+        );
 
-        result.setRiskLevel(riskLevel);
+        result.setRiskLevel(
+                riskLevel
+        );
 
         result.setRuleIndicators(
-                ruleResult.indicators
+                scan.indicators
         );
 
         result.setLlmExplanation(

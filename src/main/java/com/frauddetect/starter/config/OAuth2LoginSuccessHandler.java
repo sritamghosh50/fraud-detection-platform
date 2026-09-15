@@ -217,9 +217,9 @@ public class OAuth2LoginSuccessHandler
         // REDIRECT TO REACT
         // =====================================================
 
-        String callbackUrl =
-                frontendUrl
-                        + "/oauth2/callback";
+       String callbackUrl =
+        frontendUrl
+                + "/#/oauth2/callback";
 
         String redirectUrl =
                 callbackUrl

@@ -1,12 +1,12 @@
 package com.frauddetect.starter.service;
 
+import net.sourceforge.tess4j.ITesseract;
 import net.sourceforge.tess4j.Tesseract;
 import net.sourceforge.tess4j.TesseractException;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import javax.imageio.ImageIO;
-import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
@@ -16,149 +16,145 @@ import java.io.IOException;
 @Service
 public class OcrService {
 
+    private static final int MAX_IMAGE_SIZE = 1600;
+
     private static final String TESSDATA_PATH =
             "/usr/share/tesseract-ocr/5/tessdata";
 
-    private static final int MAX_IMAGE_SIZE = 2000;
+    public String extractText(MultipartFile imageFile) {
 
-    public String extractText(
-            MultipartFile imageFile)
-            throws IOException, TesseractException {
-
-        if (imageFile == null
-                || imageFile.isEmpty()) {
-
-            throw new IllegalArgumentException(
-                    "Image file is empty."
-            );
+        if (imageFile == null || imageFile.isEmpty()) {
+            return "";
         }
 
-        File originalFile =
-                File.createTempFile(
-                        "fraudguard-original-",
-                        ".img"
-                );
-
-        File processedFile =
-                File.createTempFile(
-                        "fraudguard-ocr-",
-                        ".png"
-                );
+        File tempInput = null;
+        File processedImage = null;
 
         try {
 
-            imageFile.transferTo(
-                    originalFile
-            );
-
             BufferedImage original =
-                    ImageIO.read(
-                            originalFile
-                    );
+                    ImageIO.read(imageFile.getInputStream());
 
             if (original == null) {
-
-                throw new IOException(
-                        "Unable to read the uploaded image."
-                );
+                return "";
             }
 
-            BufferedImage processed =
-                    prepareImage(
-                            original
-                    );
+            BufferedImage resized =
+                    resizeImage(original, MAX_IMAGE_SIZE);
+
+            BufferedImage prepared =
+                    prepareImage(resized);
+
+            tempInput = File.createTempFile(
+                    "fraudguard-upload-",
+                    ".png"
+            );
+
+            processedImage = File.createTempFile(
+                    "fraudguard-ocr-",
+                    ".png"
+            );
 
             ImageIO.write(
-                    processed,
+                    resized,
                     "png",
-                    processedFile
+                    tempInput
             );
 
-            Tesseract tesseract =
-                    new Tesseract();
-
-            tesseract.setDatapath(
-                    TESSDATA_PATH
+            ImageIO.write(
+                    prepared,
+                    "png",
+                    processedImage
             );
 
-            tesseract.setLanguage(
-                    "eng"
-            );
+            ITesseract tesseract = new Tesseract();
+
+            tesseract.setDatapath(TESSDATA_PATH);
+            tesseract.setLanguage("eng");
 
             /*
-             * Single uniform block of text.
-             * Faster for screenshots/messages.
+             * PSM 6:
+             * Assume one uniform block of text.
+             * This works well for email/message screenshots.
              */
-            tesseract.setPageSegMode(
-                    6
-            );
+            tesseract.setPageSegMode(6);
 
             /*
-             * Avoid Tesseract trying to guess
-             * a strange DPI from screenshots.
+             * Use the faster default OCR engine.
+             */
+            tesseract.setOcrEngineMode(1);
+
+            /*
+             * Tell Tesseract that the image has normal screen text.
              */
             tesseract.setVariable(
                     "user_defined_dpi",
                     "200"
             );
 
-            return tesseract.doOCR(
-                    processedFile
+            String text =
+                    tesseract.doOCR(processedImage);
+
+            if (text == null) {
+                return "";
+            }
+
+            return cleanText(text);
+
+        } catch (IOException e) {
+
+            System.out.println(
+                    "Image processing failed: "
+                            + e.getMessage()
             );
+
+            return "";
+
+        } catch (TesseractException e) {
+
+            System.out.println(
+                    "OCR failed: "
+                            + e.getMessage()
+            );
+
+            return "";
 
         } finally {
 
-            if (originalFile.exists()) {
-
-                originalFile.delete();
-            }
-
-            if (processedFile.exists()) {
-
-                processedFile.delete();
-            }
+            deleteFile(tempInput);
+            deleteFile(processedImage);
         }
     }
 
-    private BufferedImage prepareImage(
-            BufferedImage original) {
+    private BufferedImage resizeImage(
+            BufferedImage original,
+            int maxSize
+    ) {
 
-        int width =
-                original.getWidth();
+        int width = original.getWidth();
+        int height = original.getHeight();
 
-        int height =
-                original.getHeight();
+        int largest =
+                Math.max(width, height);
+
+        if (largest <= maxSize) {
+            return original;
+        }
 
         double scale =
-                Math.min(
-                        1.0,
-                        Math.min(
-                                (double) MAX_IMAGE_SIZE / width,
-                                (double) MAX_IMAGE_SIZE / height
-                        )
-                );
+                (double) maxSize / largest;
 
         int newWidth =
-                Math.max(
-                        1,
-                        (int) Math.round(
-                                width * scale
-                        )
-                );
+                Math.max(1, (int) Math.round(width * scale));
 
         int newHeight =
-                Math.max(
-                        1,
-                        (int) Math.round(
-                                height * scale
-                        )
-                );
+                Math.max(1, (int) Math.round(height * scale));
 
         BufferedImage resized =
                 new BufferedImage(
                         newWidth,
                         newHeight,
-                        BufferedImage.TYPE_BYTE_GRAY
+                        BufferedImage.TYPE_INT_RGB
                 );
 
         Graphics2D graphics =
@@ -190,63 +186,55 @@ public class OcrService {
 
         graphics.dispose();
 
-        /*
-         * Slight contrast improvement.
-         */
-        BufferedImage contrast =
+        return resized;
+    }
+
+    private BufferedImage prepareImage(
+            BufferedImage source
+    ) {
+
+        int width = source.getWidth();
+        int height = source.getHeight();
+
+        BufferedImage gray =
                 new BufferedImage(
-                        newWidth,
-                        newHeight,
+                        width,
+                        height,
                         BufferedImage.TYPE_BYTE_GRAY
                 );
 
-        for (int y = 0;
-             y < newHeight;
-             y++) {
+        Graphics2D graphics =
+                gray.createGraphics();
 
-            for (int x = 0;
-                 x < newWidth;
-                 x++) {
+        graphics.drawImage(
+                source,
+                0,
+                0,
+                null
+        );
 
-                int rgb =
-                        resized.getRGB(
-                                x,
-                                y
-                        );
+        graphics.dispose();
 
-                int gray =
-                        new Color(
-                                rgb
-                        ).getRed();
+        return gray;
+    }
 
-                /*
-                 * Simple contrast stretch.
-                 */
-                int adjusted =
-                        (gray - 128) * 2 + 128;
+    private String cleanText(String text) {
 
-                adjusted =
-                        Math.max(
-                                0,
-                                Math.min(
-                                        255,
-                                        adjusted
-                                )
-                        );
+        return text
+                .replace("\u0000", " ")
+                .replace("\r", "\n")
+                .replaceAll("[ \\t]+", " ")
+                .replaceAll("\n{3,}", "\n\n")
+                .trim();
+    }
 
-                int value =
-                        (adjusted << 16)
-                                | (adjusted << 8)
-                                | adjusted;
+    private void deleteFile(File file) {
 
-                contrast.setRGB(
-                        x,
-                        y,
-                        value
-                );
+        if (file != null && file.exists()) {
+            try {
+                file.delete();
+            } catch (Exception ignored) {
             }
         }
-
-        return contrast;
     }
 }

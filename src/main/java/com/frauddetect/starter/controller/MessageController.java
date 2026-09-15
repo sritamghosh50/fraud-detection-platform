@@ -112,10 +112,8 @@ public class MessageController {
 
             /*
              * STEP 2
-             * If there is no meaningful text,
-             * return immediately.
-             *
-             * No LLM call.
+             * If OCR could not find meaningful text,
+             * return a clear result.
              */
             if (!hasMeaningfulText(cleanedText)) {
 
@@ -138,10 +136,9 @@ public class MessageController {
 
             /*
              * STEP 3
-             * Analyze OCR text using fast
-             * deterministic rules only.
+             * Analyze OCR text using the fast
+             * deterministic message rules.
              *
-             * IMPORTANT:
              * No Ollama call here.
              */
             MessageAnalysisResult result =
@@ -163,6 +160,11 @@ public class MessageController {
             );
 
         } catch (Exception e) {
+
+            System.out.println(
+                    "Image analysis failed: "
+                            + e.getMessage()
+            );
 
             return Map.of(
                     "error",
@@ -292,10 +294,6 @@ public class MessageController {
                 "No Suspicious Text Detected"
         );
 
-        /*
-         * A normal image with no readable
-         * suspicious text = 0 risk.
-         */
         result.setRiskScore(0);
 
         result.setRiskLevel("LOW");

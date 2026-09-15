@@ -6,10 +6,8 @@ import java.util.Map;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
-
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
@@ -18,7 +16,6 @@ import org.springframework.security.oauth2.client.web.DefaultOAuth2Authorization
 import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestResolver;
 
 import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
-
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
@@ -40,7 +37,6 @@ public class SecurityConfig {
         this.oauth2LoginSuccessHandler = oauth2LoginSuccessHandler;
     }
 
-
     // =========================================================
     // PASSWORD ENCODER
     // =========================================================
@@ -50,22 +46,8 @@ public class SecurityConfig {
         return new BCryptPasswordEncoder();
     }
 
-
     // =========================================================
     // OAUTH AUTHORIZATION REQUEST RESOLVER
-    // =========================================================
-    //
-    // Google:
-    // prompt=select_account consent
-    //
-    // This forces Google to show the account selection and
-    // authorization/consent flow instead of silently using
-    // the already logged-in Google account.
-    //
-    // GitHub:
-    // prompt=select_account
-    //
-    // This forces GitHub to show the account picker.
     // =========================================================
 
     @Bean
@@ -94,7 +76,6 @@ public class SecurityConfig {
                 );
             }
 
-
             @Override
             public OAuth2AuthorizationRequest resolve(
                     jakarta.servlet.http.HttpServletRequest request,
@@ -113,7 +94,6 @@ public class SecurityConfig {
             }
         };
     }
-
 
     // =========================================================
     // CUSTOMIZE GOOGLE / GITHUB REQUEST
@@ -136,11 +116,7 @@ public class SecurityConfig {
             return authorizationRequest;
         }
 
-
-        // =====================================================
         // GOOGLE
-        // =====================================================
-
         if ("google".equalsIgnoreCase(registrationId)) {
 
             Map<String, Object> parameters =
@@ -149,15 +125,6 @@ public class SecurityConfig {
                                     .getAdditionalParameters()
                     );
 
-            /*
-             * select_account
-             * ----------------
-             * Forces Google account selection.
-             *
-             * consent
-             * -------
-             * Forces the authorization/consent step.
-             */
             parameters.put(
                     "prompt",
                     "select_account consent"
@@ -169,11 +136,7 @@ public class SecurityConfig {
                     .build();
         }
 
-
-        // =====================================================
         // GITHUB
-        // =====================================================
-
         if ("github".equalsIgnoreCase(registrationId)) {
 
             Map<String, Object> parameters =
@@ -182,13 +145,6 @@ public class SecurityConfig {
                                     .getAdditionalParameters()
                     );
 
-            /*
-             * GitHub officially supports:
-             *
-             * prompt=select_account
-             *
-             * This forces the GitHub account picker.
-             */
             parameters.put(
                     "prompt",
                     "select_account"
@@ -200,10 +156,8 @@ public class SecurityConfig {
                     .build();
         }
 
-
         return authorizationRequest;
     }
-
 
     // =========================================================
     // SECURITY FILTER CHAIN
@@ -223,7 +177,6 @@ public class SecurityConfig {
 
                 .csrf(csrf -> csrf.disable())
 
-
                 // -------------------------------------------------
                 // CORS
                 // -------------------------------------------------
@@ -234,14 +187,9 @@ public class SecurityConfig {
                         )
                 )
 
-
                 // -------------------------------------------------
                 // SESSION
                 // -------------------------------------------------
-                //
-                // OAuth requires a temporary server-side session
-                // during the Google/GitHub authorization flow.
-                //
 
                 .sessionManagement(session ->
                         session.sessionCreationPolicy(
@@ -249,41 +197,39 @@ public class SecurityConfig {
                         )
                 )
 
-
                 // -------------------------------------------------
                 // AUTHORIZATION
                 // -------------------------------------------------
 
                 .authorizeHttpRequests(auth -> auth
 
-                        // OPTIONS
+                        // OPTIONS / CORS PREFLIGHT
                         .requestMatchers(
                                 org.springframework.http.HttpMethod.OPTIONS,
                                 "/**"
                         ).permitAll()
 
-                        // Normal authentication APIs
+                        // NORMAL AUTHENTICATION APIs
                         .requestMatchers(
                                 "/api/auth/**"
                         ).permitAll()
 
-                        // OAuth endpoints
+                        // OAUTH ENDPOINTS
                         .requestMatchers(
                                 "/oauth2/**",
                                 "/login/**"
                         ).permitAll()
 
-                        // Health / monitoring
+                        // HEALTH / MONITORING
                         .requestMatchers(
                                 "/error",
                                 "/actuator/health",
                                 "/actuator/prometheus"
                         ).permitAll()
 
-                        // Everything else requires authentication
+                        // EVERYTHING ELSE
                         .anyRequest().authenticated()
                 )
-
 
                 // -------------------------------------------------
                 // OAUTH2 LOGIN
@@ -291,7 +237,6 @@ public class SecurityConfig {
 
                 .oauth2Login(oauth2 ->
                         oauth2
-
                                 .authorizationEndpoint(
                                         authorization ->
                                                 authorization
@@ -299,12 +244,10 @@ public class SecurityConfig {
                                                                 authorizationRequestResolver
                                                         )
                                 )
-
                                 .successHandler(
                                         oauth2LoginSuccessHandler
                                 )
                 )
-
 
                 // -------------------------------------------------
                 // JWT FILTER
@@ -315,10 +258,8 @@ public class SecurityConfig {
                         UsernamePasswordAuthenticationFilter.class
                 );
 
-
         return http.build();
     }
-
 
     // =========================================================
     // CORS CONFIGURATION
@@ -333,7 +274,8 @@ public class SecurityConfig {
         configuration.setAllowedOrigins(
                 Arrays.asList(
                         "http://localhost:5173",
-                        "http://localhost:5174"
+                        "http://localhost:5174",
+                        "https://fraudguard-frontend-8eim.onrender.com"
                 )
         );
 

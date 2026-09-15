@@ -9,14 +9,20 @@ import org.springframework.web.bind.annotation.*;
 import java.util.Map;
 
 /**
- * Public endpoints - anyone can call these WITHOUT being logged in yet,
- * since their whole purpose is to let someone become logged in.
+ * Public authentication endpoints.
+ *
  * POST /api/auth/register
  * POST /api/auth/login
  */
 @RestController
 @RequestMapping("/api/auth")
-@CrossOrigin(origins = {"http://localhost:5173", "http://localhost:5174"})
+@CrossOrigin(
+        origins = {
+                "http://localhost:5173",
+                "http://localhost:5174",
+                "https://fraudguard-frontend-8eim.onrender.com"
+        }
+)
 public class AuthController {
 
     private final AuthService authService;
@@ -30,8 +36,11 @@ public class AuthController {
         try {
             AuthResponse response = authService.register(request);
             return ResponseEntity.ok(response);
+
         } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return ResponseEntity
+                    .badRequest()
+                    .body(Map.of("error", e.getMessage()));
         }
     }
 
@@ -40,8 +49,11 @@ public class AuthController {
         try {
             AuthResponse response = authService.login(request);
             return ResponseEntity.ok(response);
+
         } catch (IllegalArgumentException e) {
-            return ResponseEntity.status(401).body(Map.of("error", e.getMessage()));
+            return ResponseEntity
+                    .status(401)
+                    .body(Map.of("error", e.getMessage()));
         }
     }
 }

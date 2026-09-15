@@ -7,7 +7,15 @@ import java.util.List;
 
 public interface AlertRepository extends JpaRepository<Alert, Long> {
 
-    // Spring automatically implements this just from the method name -
-    // "find all alerts where reviewStatus equals this value"
+    // Find alerts by review status.
     List<Alert> findByReviewStatus(String reviewStatus);
+
+    // Find only alerts belonging to a specific user.
+    List<Alert> findByUserId(String userId);
+
+    // Find alerts belonging to a specific user and review status.
+    List<Alert> findByUserIdAndReviewStatus(
+            String userId,
+            String reviewStatus
+    );
 }

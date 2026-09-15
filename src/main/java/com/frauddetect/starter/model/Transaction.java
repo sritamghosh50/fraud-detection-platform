@@ -8,6 +8,10 @@ public class Transaction {
 
     private String transactionId;
     private String userId;
+
+    // Email of the authenticated account that owns this transaction
+    private String ownerEmail;
+
     private double amount;
     private String country;         // country the transaction happened in
     private String userHomeCountry; // country the user normally lives/transacts in
@@ -17,7 +21,7 @@ public class Transaction {
     public Transaction() {
     }
 
-    // Getters and setters - these let other code read/write the fields above
+    // Transaction ID
     public String getTransactionId() {
         return transactionId;
     }
@@ -26,6 +30,7 @@ public class Transaction {
         this.transactionId = transactionId;
     }
 
+    // User ID
     public String getUserId() {
         return userId;
     }
@@ -34,6 +39,16 @@ public class Transaction {
         this.userId = userId;
     }
 
+    // Owner email
+    public String getOwnerEmail() {
+        return ownerEmail;
+    }
+
+    public void setOwnerEmail(String ownerEmail) {
+        this.ownerEmail = ownerEmail;
+    }
+
+    // Amount
     public double getAmount() {
         return amount;
     }
@@ -42,6 +57,7 @@ public class Transaction {
         this.amount = amount;
     }
 
+    // Transaction country
     public String getCountry() {
         return country;
     }
@@ -50,6 +66,7 @@ public class Transaction {
         this.country = country;
     }
 
+    // User home country
     public String getUserHomeCountry() {
         return userHomeCountry;
     }
@@ -58,6 +75,7 @@ public class Transaction {
         this.userHomeCountry = userHomeCountry;
     }
 
+    // Hour of day
     public int getHourOfDay() {
         return hourOfDay;
     }

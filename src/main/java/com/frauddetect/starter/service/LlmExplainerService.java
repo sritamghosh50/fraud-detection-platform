@@ -4,147 +4,184 @@ import com.frauddetect.starter.model.OllamaRequest;
 import com.frauddetect.starter.model.OllamaResponse;
 import com.frauddetect.starter.model.RiskDecision;
 import com.frauddetect.starter.model.Transaction;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
-/**
- * Generates a plain-English explanation for an already calculated
- * fraud-risk decision.
- *
- * IMPORTANT:
- * The LLM only explains the decision.
- * It does NOT make the fraud decision.
- */
 @Service
 public class LlmExplainerService {
 
-    private static final String DEFAULT_OLLAMA_URL =
-            "http://localhost:11434/api/generate";
-
-    private static final String MODEL_NAME =
-            "llama3.2";
-
     private final RestTemplate restTemplate;
-    private final String ollamaUrl;
+
+    @Value("${ollama.url}")
+    private String ollamaUrl;
 
     public LlmExplainerService(RestTemplate restTemplate) {
         this.restTemplate = restTemplate;
-
-        String configuredUrl = System.getenv("OLLAMA_URL");
-
-        if (configuredUrl == null || configuredUrl.isBlank()) {
-            this.ollamaUrl = DEFAULT_OLLAMA_URL;
-        } else {
-            this.ollamaUrl = configuredUrl + "/api/generate";
-        }
-
-        System.out.println("Ollama URL: " + this.ollamaUrl);
     }
 
+    /**
+     * Generate an explanation for a suspicious transaction.
+     * This method is used by TransactionConsumer.
+     */
     public String generateExplanation(
             Transaction transaction,
             RiskDecision decision) {
-
-        String prompt = buildPrompt(transaction, decision);
 
         try {
 
             OllamaRequest request =
                     new OllamaRequest(
-                            MODEL_NAME,
-                            prompt,
+                            "llama3.2",
+                            buildTransactionPrompt(
+                                    transaction,
+                                    decision
+                            ),
                             false
                     );
 
-            OllamaResponse response =
-                    restTemplate.postForObject(
+            ResponseEntity<OllamaResponse> response =
+                    restTemplate.postForEntity(
                             ollamaUrl,
                             request,
                             OllamaResponse.class
                     );
 
-            if (response != null
-                    && response.getResponse() != null
-                    && !response.getResponse().isBlank()) {
+            if (response.getBody() != null
+                    && response.getBody().getResponse() != null
+                    && !response.getBody().getResponse().isBlank()) {
 
-                return response.getResponse().trim();
-
-            } else {
-
-                return "Explanation unavailable (empty response from LLM).";
+                return response.getBody().getResponse();
             }
+
+            return "LLM returned an empty response.";
 
         } catch (Exception e) {
 
             System.out.println(
-                    "Failed to call Ollama at "
-                            + ollamaUrl
-                            + ": "
+                    "Failed to get LLM transaction explanation: "
                             + e.getMessage()
             );
 
-            return "Explanation unavailable (LLM service could not be reached).";
+            return "The LLM analysis could not be completed.";
         }
     }
 
-    private String buildPrompt(
+    /**
+     * General-purpose explanation method.
+     */
+    public String explain(String transactionText) {
+
+        try {
+
+            OllamaRequest request =
+                    new OllamaRequest(
+                            "llama3.2",
+                            buildPrompt(transactionText),
+                            false
+                    );
+
+            ResponseEntity<OllamaResponse> response =
+                    restTemplate.postForEntity(
+                            ollamaUrl,
+                            request,
+                            OllamaResponse.class
+                    );
+
+            if (response.getBody() != null
+                    && response.getBody().getResponse() != null
+                    && !response.getBody().getResponse().isBlank()) {
+
+                return response.getBody().getResponse();
+            }
+
+            return "LLM returned an empty response.";
+
+        } catch (Exception e) {
+
+            System.out.println(
+                    "Failed to get LLM explanation: "
+                            + e.getMessage()
+            );
+
+            return "The LLM analysis could not be completed.";
+        }
+    }
+
+    /**
+     * Build the prompt used for transaction fraud explanations.
+     */
+    private String buildTransactionPrompt(
             Transaction transaction,
             RiskDecision decision) {
 
-        double mlScore = decision.getMlRiskScore();
-        double rulesScore = decision.getRulesRiskScore();
-        double finalScore = decision.getFinalRiskScore();
+        String reasons =
+                decision.getRulesReasons() == null
+                        ? "No specific rule reasons were provided."
+                        : String.join(
+                                ", ",
+                                decision.getRulesReasons()
+                        );
 
-        return String.format(
+        return """
+                You are a fraud detection assistant.
 
-                """
-                You are a fraud detection explanation assistant.
+                Analyze this transaction and explain why it was
+                flagged for review.
 
-                Your job is ONLY to explain an already calculated risk decision.
-                Do NOT change the decision.
-                Do NOT invent facts.
-                Do NOT make up thresholds.
-
-                IMPORTANT SCORE INTERPRETATION:
-                - All risk scores range from 0 to 100.
-                - 0 means very low risk.
-                - 100 means extremely high risk.
-                - Therefore, 99.99 is extremely HIGH risk, NOT low risk.
-                - A higher score always means higher risk.
-
-                Exact transaction information:
+                Transaction ID: %s
+                User ID: %s
                 Amount: %.2f
                 Transaction country: %s
                 User home country: %s
                 Hour of day: %d
 
-                Exact calculated results:
-                Rules engine risk score: %.2f out of 100
-                ML model risk score: %.2f out of 100
-                Final combined risk score: %.2f out of 100
-                Final risk level: %s
+                Final risk score: %.2f
+                Risk level: %s
+                ML risk score: %.2f
+                Rules risk score: %.2f
 
-                Write exactly 2 or 3 short sentences in simple English.
+                Rule-based reasons:
+                %s
 
-                Explain why the transaction received the given risk level.
-                If the ML score is high, describe it as high risk.
-                If the rules score is high, describe it as high risk.
-                If the final score is high, describe the overall risk as high.
-                You may mention the country difference or unusual hour only
-                because those exact values were provided.
+                Give a short, clear explanation that a human reviewer
+                can understand quickly.
 
-                Never say that a score close to 100 is low or very low.
-                Never invent a reason that is not supported by the values above.
-                """,
+                Mention the main suspicious factors and what the
+                reviewer should consider.
 
+                Do not invent information that is not provided.
+                """.formatted(
+                transaction.getTransactionId(),
+                transaction.getUserId(),
                 transaction.getAmount(),
                 transaction.getCountry(),
                 transaction.getUserHomeCountry(),
                 transaction.getHourOfDay(),
-                rulesScore,
-                mlScore,
-                finalScore,
-                decision.getRiskLevel()
+                decision.getFinalRiskScore(),
+                decision.getRiskLevel(),
+                decision.getMlRiskScore(),
+                decision.getRulesRiskScore(),
+                reasons
         );
+    }
+
+    /**
+     * Build the prompt used for general text/message explanations.
+     */
+    private String buildPrompt(String transactionText) {
+
+        return """
+                You are a fraud detection assistant.
+
+                Analyze the following transaction/message and explain
+                whether it looks suspicious.
+
+                Give a short and simple explanation for a normal user.
+
+                Transaction/message:
+                %s
+                """.formatted(transactionText);
     }
 }

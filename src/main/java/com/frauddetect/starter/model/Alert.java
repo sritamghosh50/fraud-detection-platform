@@ -1,5 +1,6 @@
 package com.frauddetect.starter.model;
 
+import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -9,7 +10,9 @@ import java.time.LocalDateTime;
 
 /**
  * Represents one alert - a transaction that needs human review.
- * Separate from TransactionRecord so reviewers only deal with what matters.
+ *
+ * Each alert belongs to the authenticated user who submitted
+ * the transaction.
  */
 @Entity
 public class Alert {
@@ -19,10 +22,14 @@ public class Alert {
     private Long id;
 
     private String transactionId;
+
+    // Email of the authenticated user who owns this alert
+    private String userId;
+
     private Double finalRiskScore;
     private String riskLevel;
 
-    @jakarta.persistence.Column(length = 2000)
+    @Column(length = 2000)
     private String llmExplanation;
 
     private String reviewStatus; // PENDING, APPROVED, REJECTED
@@ -47,6 +54,14 @@ public class Alert {
 
     public void setTransactionId(String transactionId) {
         this.transactionId = transactionId;
+    }
+
+    public String getUserId() {
+        return userId;
+    }
+
+    public void setUserId(String userId) {
+        this.userId = userId;
     }
 
     public Double getFinalRiskScore() {

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.frauddetect.starter.model.OllamaRequest;
 import com.frauddetect.starter.model.OllamaResponse;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
@@ -14,7 +15,9 @@ import org.springframework.web.client.RestTemplate;
 @Service
 public class UrlLlmService {
 
-    private static final String OLLAMA_URL = "http://localhost:11434/api/generate";
+    @Value("${ollama.url}")
+    private String ollamaUrl;
+
     private static final String MODEL_NAME = "llama3.2";
 
     private final RestTemplate restTemplate;
@@ -34,7 +37,7 @@ public class UrlLlmService {
 
         try {
             OllamaRequest request = new OllamaRequest(MODEL_NAME, prompt, false);
-            OllamaResponse response = restTemplate.postForObject(OLLAMA_URL, request, OllamaResponse.class);
+            OllamaResponse response = restTemplate.postForObject(ollamaUrl, request, OllamaResponse.class);
 
             if (response == null || response.getResponse() == null) {
                 return fallback();

@@ -17,6 +17,7 @@ import java.time.LocalDateTime;
  * 3. ML model result
  * 4. Final combined risk decision
  * 5. LLM-generated explanation
+ * 6. The actual account that owns the record
  */
 @Entity
 public class TransactionRecord {
@@ -26,7 +27,13 @@ public class TransactionRecord {
     private Long id;
 
     private String transactionId;
+
+    // Existing transaction/user label.
     private String userId;
+
+    // Actual logged-in account that owns this record.
+    private String ownerEmail;
+
     private double amount;
     private String country;
     private String userHomeCountry;
@@ -76,6 +83,14 @@ public class TransactionRecord {
 
     public void setUserId(String userId) {
         this.userId = userId;
+    }
+
+    public String getOwnerEmail() {
+        return ownerEmail;
+    }
+
+    public void setOwnerEmail(String ownerEmail) {
+        this.ownerEmail = ownerEmail;
     }
 
     public double getAmount() {

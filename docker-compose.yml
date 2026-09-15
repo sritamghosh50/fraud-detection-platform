@@ -89,7 +89,7 @@ services:
       SPRING_DATA_REDIS_HOST: redis
       SPRING_DATA_REDIS_PORT: 6379
 
-      OLLAMA_URL: http://host.docker.internal:11434
+      OLLAMA_URL: http://host.docker.internal:11434/api/generate
 
       JAVA_TOOL_OPTIONS: "-Duser.timezone=UTC"
 

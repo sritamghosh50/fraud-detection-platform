@@ -15,12 +15,13 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Endpoints for analyzing suspicious text messages, screenshots, and URLs.
- */
 @RestController
 @RequestMapping("/api/messages")
-@CrossOrigin(origins = {"http://localhost:5173", "http://localhost:5174"})
+@CrossOrigin(origins = {
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "https://fraudguard-frontend-8eim.onrender.com"
+})
 public class MessageController {
 
     private final MessageAnalysisService messageAnalysisService;
@@ -36,11 +37,20 @@ public class MessageController {
             ScamCheckRepository scamCheckRepository,
             CurrentUserService currentUserService) {
 
-        this.messageAnalysisService = messageAnalysisService;
-        this.ocrService = ocrService;
-        this.urlAnalysisService = urlAnalysisService;
-        this.scamCheckRepository = scamCheckRepository;
-        this.currentUserService = currentUserService;
+        this.messageAnalysisService =
+                messageAnalysisService;
+
+        this.ocrService =
+                ocrService;
+
+        this.urlAnalysisService =
+                urlAnalysisService;
+
+        this.scamCheckRepository =
+                scamCheckRepository;
+
+        this.currentUserService =
+                currentUserService;
     }
 
     @PostMapping("/analyze")
@@ -65,7 +75,8 @@ public class MessageController {
     public MessageAnalysisResult analyzeUrl(
             @RequestBody Map<String, String> request) {
 
-        String url = request.get("url");
+        String url =
+                request.get("url");
 
         MessageAnalysisResult result =
                 urlAnalysisService.analyze(url);
@@ -85,19 +96,26 @@ public class MessageController {
 
         try {
 
+            /*
+             * STEP 1
+             * Extract text from image.
+             */
             String extractedText =
-                    ocrService.extractText(imageFile);
+                    ocrService.extractText(
+                            imageFile
+                    );
 
             String cleanedText =
-                    cleanOcrText(extractedText);
+                    cleanOcrText(
+                            extractedText
+                    );
 
             /*
-             * IMPORTANT:
-             * Do not send random OCR characters to the LLM.
+             * STEP 2
+             * If there is no meaningful text,
+             * return immediately.
              *
-             * Many normal photos contain shapes, skin, furniture,
-             * shadows, etc. Tesseract can sometimes interpret these
-             * as random characters.
+             * No LLM call.
              */
             if (!hasMeaningfulText(cleanedText)) {
 
@@ -119,11 +137,15 @@ public class MessageController {
             }
 
             /*
-             * Only genuine readable text reaches the normal
-             * phishing/scam analysis pipeline.
+             * STEP 3
+             * Analyze OCR text using fast
+             * deterministic rules only.
+             *
+             * IMPORTANT:
+             * No Ollama call here.
              */
             MessageAnalysisResult result =
-                    messageAnalysisService.analyze(
+                    messageAnalysisService.analyzeImageText(
                             cleanedText
                     );
 
@@ -144,82 +166,63 @@ public class MessageController {
 
             return Map.of(
                     "error",
-                    "Failed to process image: " + e.getMessage()
+                    "Failed to process image: "
+                            + e.getMessage()
             );
         }
     }
 
-    /**
-     * Cleans OCR output before deciding whether it is meaningful.
-     */
-    private String cleanOcrText(String text) {
+    private String cleanOcrText(
+            String text) {
 
         if (text == null) {
             return "";
         }
 
-        String cleaned = text
+        return text
                 .replaceAll("[\\r\\n\\t]+", " ")
                 .replaceAll("\\s+", " ")
                 .trim();
-
-        return cleaned;
     }
 
-    /**
-     * Stronger OCR validation.
-     *
-     * Random OCR output should NOT be treated as a real message.
-     */
-    private boolean hasMeaningfulText(String text) {
+    private boolean hasMeaningfulText(
+            String text) {
 
-        if (text == null || text.isBlank()) {
+        if (text == null
+                || text.isBlank()) {
+
             return false;
         }
 
-        String cleaned = text.trim();
+        String cleaned =
+                text.trim();
 
-        /*
-         * Very short OCR output is normally not enough
-         * to perform reliable scam analysis.
-         */
         if (cleaned.length() < 12) {
             return false;
         }
 
-        /*
-         * Count alphabetic characters.
-         */
         int letterCount = 0;
 
-        for (char c : cleaned.toCharArray()) {
+        for (char c :
+                cleaned.toCharArray()) {
+
             if (Character.isLetter(c)) {
                 letterCount++;
             }
         }
 
-        /*
-         * Require enough alphabetic content.
-         */
         if (letterCount < 8) {
             return false;
         }
 
-        /*
-         * Calculate percentage of alphabetic characters.
-         *
-         * Random OCR often contains many numbers and symbols.
-         */
         double letterRatio =
-                (double) letterCount / cleaned.length();
+                (double) letterCount
+                        / cleaned.length();
 
         if (letterRatio < 0.45) {
             return false;
         }
 
-        /*
-         * Extract word-like pieces.
-         */
         String[] words =
                 cleaned.split("\\s+");
 
@@ -228,70 +231,49 @@ public class MessageController {
         for (String word : words) {
 
             String lettersOnly =
-                    word.replaceAll("[^A-Za-z]", "");
+                    word.replaceAll(
+                            "[^A-Za-z]",
+                            ""
+                    );
 
-            /*
-             * A real English word normally contains
-             * at least 3 alphabetic characters.
-             */
             if (lettersOnly.length() >= 3) {
                 meaningfulWordCount++;
             }
         }
 
-        /*
-         * Require at least TWO meaningful words.
-         *
-         * Example:
-         *
-         * "URGENT VERIFY ACCOUNT"
-         * -> accepted
-         *
-         * "x7@#k91"
-         * -> rejected
-         *
-         * "a8Jk29"
-         * -> rejected
-         */
         if (meaningfulWordCount < 2) {
             return false;
         }
 
-        /*
-         * Reject strings that look like one long random
-         * alphanumeric OCR token.
-         */
-        boolean containsSpace = cleaned.contains(" ");
-
-        if (!containsSpace) {
+        if (!cleaned.contains(" ")) {
             return false;
         }
 
-        /*
-         * Reject text dominated by unusual symbols.
-         */
         int digitCount = 0;
         int symbolCount = 0;
 
-        for (char c : cleaned.toCharArray()) {
+        for (char c :
+                cleaned.toCharArray()) {
 
             if (Character.isDigit(c)) {
+
                 digitCount++;
-            } else if (!Character.isLetter(c)
-                    && !Character.isWhitespace(c)) {
+
+            } else if (
+                    !Character.isLetter(c)
+                            && !Character.isWhitespace(c)
+            ) {
+
                 symbolCount++;
             }
         }
 
-        if (symbolCount > cleaned.length() * 0.20) {
+        if (symbolCount >
+                cleaned.length() * 0.20) {
+
             return false;
         }
 
-        /*
-         * If the OCR output contains an excessive amount
-         * of digits compared with letters, it is probably
-         * not a readable message.
-         */
         if (digitCount > letterCount) {
             return false;
         }
@@ -299,10 +281,6 @@ public class MessageController {
         return true;
     }
 
-    /**
-     * Creates a safe result when the image does not contain
-     * enough readable text for phishing analysis.
-     */
     private MessageAnalysisResult createNoTextResult() {
 
         MessageAnalysisResult result =
@@ -314,7 +292,11 @@ public class MessageController {
                 "No Suspicious Text Detected"
         );
 
-        result.setRiskScore(5);
+        /*
+         * A normal image with no readable
+         * suspicious text = 0 risk.
+         */
+        result.setRiskScore(0);
 
         result.setRiskLevel("LOW");
 
@@ -325,15 +307,14 @@ public class MessageController {
         );
 
         result.setLlmExplanation(
-                "The image did not contain enough readable text " +
-                "for reliable phishing or scam analysis. " +
-                "Random OCR characters were ignored."
+                "No readable scam or phishing text "
+                        + "was detected in the image."
         );
 
         result.setRecommendation(
-                "No phishing message was detected from the readable text. " +
-                "If the image contains a message, upload a clearer " +
-                "screenshot with readable text."
+                "No suspicious text was detected. "
+                        + "For better analysis, upload a clear screenshot "
+                        + "if the image contains a message."
         );
 
         return result;
@@ -347,7 +328,9 @@ public class MessageController {
         ScamCheckRecord record =
                 new ScamCheckRecord();
 
-        record.setCheckType(checkType);
+        record.setCheckType(
+                checkType
+        );
 
         record.setInputSummary(
                 inputSummary
@@ -378,21 +361,25 @@ public class MessageController {
         );
 
         record.setOwnerEmail(
-                currentUserService.getCurrentUserEmail()
+                currentUserService
+                        .getCurrentUserEmail()
         );
 
         record.setCheckedAt(
                 LocalDateTime.now()
         );
 
-        scamCheckRepository.save(record);
+        scamCheckRepository.save(
+                record
+        );
     }
 
     @GetMapping("/history")
     public List<ScamCheckRecord> getHistory() {
 
         String email =
-                currentUserService.getCurrentUserEmail();
+                currentUserService
+                        .getCurrentUserEmail();
 
         return scamCheckRepository
                 .findByOwnerEmailOrderByCheckedAtDesc(

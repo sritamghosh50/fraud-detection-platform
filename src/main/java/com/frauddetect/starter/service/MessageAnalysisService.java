@@ -3,21 +3,6 @@ package com.frauddetect.starter.service;
 import com.frauddetect.starter.model.MessageAnalysisResult;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
-import java.util.List;
-
-/**
- * Combines rule-based analysis and optional LLM analysis.
- *
- * If the LLM is available:
- *      Rule score + LLM score are combined.
- *
- * If the LLM is unavailable:
- *      We use the real rule-based score only.
- *
- * This prevents an unavailable LLM from incorrectly producing
- * a fixed risk score such as 60 for every message.
- */
 @Service
 public class MessageAnalysisService {
 
@@ -35,6 +20,11 @@ public class MessageAnalysisService {
         this.messageLlmService = messageLlmService;
     }
 
+    /*
+     * Normal message analysis.
+     *
+     * Uses rules + LLM when LLM is available.
+     */
     public MessageAnalysisResult analyze(String messageText) {
 
         MessageRuleService.RuleScanResult ruleResult =
@@ -44,118 +34,114 @@ public class MessageAnalysisService {
                 messageLlmService.analyze(messageText);
 
         /*
-         * ---------------------------------------------------------
-         * LLM UNAVAILABLE
-         * ---------------------------------------------------------
-         *
-         * Do NOT convert confidence=0 into 100% fraud risk.
-         *
-         * In production, Ollama may not be available.
-         * In that situation the deterministic rules are still valid.
+         * If LLM is unavailable, use rules only.
          */
-        boolean llmUnavailable =
-                llmResult == null
-                        || llmResult.llmUnavailable;
+        if (llmResult.llmUnavailable) {
+            return buildRuleOnlyResult(ruleResult);
+        }
 
-        double finalScore;
+        double llmScore =
+                llmResult.isScam
+                        ? llmResult.confidence
+                        : (100 - llmResult.confidence);
 
-        String category;
+        double finalScore =
+                (llmScore * LLM_WEIGHT)
+                        + (ruleResult.score * RULES_WEIGHT);
+
+        if (ruleResult.score >= 70
+                && finalScore < ruleResult.score) {
+
+            finalScore = ruleResult.score;
+        }
+
+        return buildResult(
+                finalScore,
+                llmResult.category,
+                ruleResult,
+                llmResult.explanation
+        );
+    }
+
+    /*
+     * Image analysis uses ONLY deterministic rules.
+     *
+     * This is intentionally fast.
+     * It does not wait for Ollama.
+     */
+    public MessageAnalysisResult analyzeImageText(
+            String extractedText) {
+
+        MessageRuleService.RuleScanResult ruleResult =
+                messageRuleService.scan(extractedText);
+
+        return buildRuleOnlyResult(ruleResult);
+    }
+
+    private MessageAnalysisResult buildRuleOnlyResult(
+            MessageRuleService.RuleScanResult ruleResult) {
+
+        String category =
+                ruleResult.likelyCategory;
+
+        if (category == null
+                || category.isBlank()
+                || category.equalsIgnoreCase("Unclear")) {
+
+            category = "Rule-Based Analysis";
+        }
 
         String explanation;
 
-        if (llmUnavailable) {
-
-            finalScore = ruleResult.score;
-
-            category = ruleResult.likelyCategory;
-
-            if (category == null || category.isBlank()) {
-                category = "Rule-Based Analysis";
-            }
+        if (ruleResult.score == 0) {
 
             explanation =
-                    "AI analysis is currently unavailable. "
-                            + "The result is based on FraudGuard's structural "
-                            + "and keyword-based security rules.";
+                    "No strong scam indicators were detected "
+                            + "by FraudGuard's security rules.";
 
         } else {
 
-            /*
-             * -----------------------------------------------------
-             * NORMAL LLM + RULE ANALYSIS
-             * -----------------------------------------------------
-             */
-
-            double llmScore;
-
-            if (llmResult.isScam) {
-
-                llmScore = llmResult.confidence;
-
-            } else {
-
-                llmScore = 100 - llmResult.confidence;
-            }
-
-            finalScore =
-                    (llmScore * LLM_WEIGHT)
-                            + (ruleResult.score * RULES_WEIGHT);
-
-            /*
-             * If rules found strong indicators, don't allow
-             * the LLM to completely override them.
-             */
-            if (ruleResult.score >= 70
-                    && finalScore < ruleResult.score) {
-
-                finalScore = ruleResult.score;
-            }
-
-            category =
-                    !"Unclear".equalsIgnoreCase(
-                            llmResult.category
-                    )
-                            ? llmResult.category
-                            : ruleResult.likelyCategory;
-
-            explanation = llmResult.explanation;
+            explanation =
+                    "The result is based on FraudGuard's "
+                            + "deterministic scam and phishing rules.";
         }
 
-        /*
-         * ---------------------------------------------------------
-         * FINAL SCORE
-         * ---------------------------------------------------------
-         */
+        return buildResult(
+                ruleResult.score,
+                category,
+                ruleResult,
+                explanation
+        );
+    }
 
-        finalScore =
-                Math.min(
-                        100,
-                        Math.max(
-                                0,
-                                finalScore
+    private MessageAnalysisResult buildResult(
+            double score,
+            String category,
+            MessageRuleService.RuleScanResult ruleResult,
+            String explanation) {
+
+        int finalScore =
+                (int) Math.round(
+                        Math.min(
+                                100,
+                                Math.max(
+                                        0,
+                                        score
+                                )
                         )
                 );
 
-        int roundedScore =
-                (int) Math.round(finalScore);
-
-        /*
-         * ---------------------------------------------------------
-         * RISK LEVEL
-         * ---------------------------------------------------------
-         */
-
         String riskLevel;
 
-        if (roundedScore >= 85) {
+        if (finalScore >= 85) {
 
             riskLevel = "CRITICAL";
 
-        } else if (roundedScore >= 60) {
+        } else if (finalScore >= 60) {
 
             riskLevel = "HIGH";
 
-        } else if (roundedScore >= 30) {
+        } else if (finalScore >= 30) {
 
             riskLevel = "MEDIUM";
 
@@ -165,54 +151,35 @@ public class MessageAnalysisService {
         }
 
         boolean isScam =
-                roundedScore >= 60;
+                finalScore >= 60;
 
-        /*
-         * ---------------------------------------------------------
-         * DEFAULT CATEGORY
-         * ---------------------------------------------------------
-         */
-
-        if (category == null || category.isBlank()) {
+        if (category == null
+                || category.isBlank()) {
 
             category = "Unclear";
         }
-
-        /*
-         * ---------------------------------------------------------
-         * RECOMMENDATION
-         * ---------------------------------------------------------
-         */
 
         String recommendation;
 
         if (isScam) {
 
             recommendation =
-                    "Do not click any links, share personal information, "
-                            + "or send money. Verify independently through "
-                            + "official channels before taking any action.";
+                    "Do not click links, share personal "
+                            + "information, or send money. "
+                            + "Verify independently through official channels.";
 
-        } else if (roundedScore >= 30) {
+        } else if (finalScore >= 30) {
 
             recommendation =
-                    "This message shows some suspicious signals. "
-                            + "Be cautious and verify the sender before "
-                            + "sharing information or making payments.";
+                    "Proceed carefully and verify the sender "
+                            + "before sharing information or making payments.";
 
         } else {
 
             recommendation =
-                    "This message shows low risk signals, but always "
-                            + "stay cautious with unexpected messages "
-                            + "asking for money or personal information.";
+                    "No strong scam indicators were detected. "
+                            + "Continue to stay cautious with unexpected messages.";
         }
-
-        /*
-         * ---------------------------------------------------------
-         * BUILD RESULT
-         * ---------------------------------------------------------
-         */
 
         MessageAnalysisResult result =
                 new MessageAnalysisResult();
@@ -221,7 +188,7 @@ public class MessageAnalysisService {
 
         result.setScamCategory(category);
 
-        result.setRiskScore(roundedScore);
+        result.setRiskScore(finalScore);
 
         result.setRiskLevel(riskLevel);
 
